@@ -9,58 +9,31 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     let builder_ident = format_ident!("{}Builder", base_ident);
     // dbg!(&input.data);
 
-    let mut fields_token = vec![];
-    let mut types_token = vec![];
+    let fields = match &input.data {
+        Data::Struct(data) => {
+            match &data.fields {
+                Fields::Named(fields) => fields,
+                _ => panic!("fields should be Named")
+            }
+        }
+        _ => panic!("data should be Struct")
+    };
+
     let mut required_fields_token = vec![];
     let mut required_types_token = vec![];
     let mut required_field_names_token = vec![];
     let mut option_fields_token = vec![];
     let mut option_inner_types_token = vec![];
-    match &input.data {
-        Data::Struct(data) => {
-            match &data.fields {
-                Fields::Named(fields) => {
-                    for f in fields.named.clone() {
-                        match &f.ty {
-                            Type::Path(path) => {
-                                match path.path.segments.first() {
-                                    Some(segment) => {
-                                        if segment.ident == "Option" {
-                                            option_fields_token.push(f.ident.clone().unwrap());
-
-                                            match &segment.arguments {
-                                                PathArguments::AngleBracketed(inner) => {
-                                                    match &inner.args.first().unwrap() {
-                                                        GenericArgument::Type(inner_type) => {
-                                                            option_inner_types_token.push(inner_type.clone())
-                                                        }
-                                                        _ => panic!("unknown type")
-                                                    }
-                                                }
-                                                _ => panic!("unknown type")
-                                            }
-                                        } else {
-                                            required_fields_token.push(f.ident.clone().unwrap());
-                                            required_field_names_token.push(f.ident.clone().unwrap().to_string());
-                                            required_types_token.push(f.ty.clone())
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            _ => {}
-                        }
-                        fields_token.push(f.ident.clone().unwrap());
-                        types_token.push(f.ty);
-                    };
-                }
-                _ => panic!("fields should be Named")
-            }
+    for f in fields.named.clone() {
+        if is_option(&f.ty) {
+            option_fields_token.push(f.ident.clone().unwrap());
+            option_inner_types_token.push(detect_option_inner_type(&f.ty));
+        } else {
+            required_fields_token.push(f.ident.clone().unwrap());
+            required_field_names_token.push(f.ident.clone().unwrap().to_string());
+            required_types_token.push(f.ty.clone())
         }
-        _ => {
-            panic!("data should be Struct")
-        }
-    }
+    };
 
     let token = quote! {
         pub struct #builder_ident {
@@ -70,7 +43,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         impl #base_ident {
             pub fn builder() -> #builder_ident {
                 #builder_ident {
-                    #(#fields_token: None,)*
+                    #(#required_fields_token: None,)*
+                    #(#option_fields_token: None,)*
                 }
             }
 
@@ -103,4 +77,37 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         }
     };
     token.into()
+}
+
+fn is_option(ty: &Type) -> bool {
+    match ty {
+        Type::Path(path) => {
+            match path.path.segments.first() {
+                Some(segment) => segment.ident == "Option",
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+fn detect_option_inner_type(ty: &Type) -> Type {
+    let segment = match ty {
+        Type::Path(path) => {
+            match path.path.segments.first() {
+                Some(segment) => segment,
+                _ => panic!("not option."),
+            }
+        }
+        _ => panic!("not option."),
+    };
+    match &segment.arguments {
+        PathArguments::AngleBracketed(inner) => {
+            match &inner.args.first().unwrap() {
+                GenericArgument::Type(inner_type) => inner_type.clone(),
+                _ => panic!("unknown type")
+            }
+        }
+        _ => panic!("unknown type")
+    }
 }
